@@ -19,9 +19,17 @@ app = FastAPI(
 )
 
 # CORS for React frontend
+# Restrict to known origins for security, but allow common dev ports.
+origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,6 +37,18 @@ app.add_middleware(
 
 # In-memory storage for demo
 uploaded_images = {}
+MAX_STORED_IMAGES = 20
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+def cleanup_images():
+    """Keep only the most recent images to prevent memory leaks."""
+    if len(uploaded_images) > MAX_STORED_IMAGES:
+        # Sort by uploaded_at and remove oldest
+        sorted_ids = sorted(uploaded_images.keys(), key=lambda k: uploaded_images[k]["uploaded_at"])
+        # Remove oldest until we have MAX_STORED_IMAGES
+        to_remove = len(uploaded_images) - MAX_STORED_IMAGES
+        for i in range(to_remove):
+            del uploaded_images[sorted_ids[i]]
 
 # ========================
 # Mock AI Functions
@@ -116,6 +136,42 @@ def mock_yield_prediction():
         "processing_time": round(random.uniform(1.5, 2.2), 2)
     }
 
+def generate_field_zones(nutrient_analysis_result, pest_detection_result):
+    """Generate field zones status based on analysis results."""
+
+    zones = ["A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4", "C1", "C2", "C3", "C4"]
+    field_zones = []
+
+    affected_nutrient = nutrient_analysis_result.get("affected_zones", [])
+
+    # We don't get specific zones from pest detection in the mock, but let's assume if high alert, more zones are critical
+    is_pest_critical = pest_detection_result.get("alert_level") == "High Alert"
+
+    for zone_id in zones:
+        status = "healthy"
+        score = random.randint(85, 98)
+
+        if zone_id in affected_nutrient:
+            status = "warning"
+            score = random.randint(55, 75)
+
+        # Randomly assign pest issues if critical, or if it matches "affected_zones" for simplicity in demo logic overlap
+        # Or just add some random critical zones if pest level is high
+        if is_pest_critical and random.random() < 0.3:
+             status = "critical"
+             score = random.randint(30, 50)
+        elif pest_detection_result.get("alert_level") == "Moderate" and random.random() < 0.1:
+             status = "warning"
+             score = random.randint(60, 70)
+
+        field_zones.append({
+            "id": zone_id,
+            "status": status,
+            "score": score
+        })
+
+    return field_zones
+
 # ========================
 # API Endpoints
 # ========================
@@ -135,8 +191,12 @@ async def upload_image(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
     
-    image_id = str(uuid.uuid4())[:8]
+    # Check file size
     contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 10MB.")
+
+    image_id = str(uuid.uuid4())[:8]
     
     uploaded_images[image_id] = {
         "filename": file.filename,
@@ -144,6 +204,8 @@ async def upload_image(file: UploadFile = File(...)):
         "uploaded_at": datetime.now().isoformat()
     }
     
+    cleanup_images()
+
     return {
         "status": "success",
         "image_id": image_id,
@@ -169,29 +231,48 @@ async def analyze_yield(image_id: Optional[str] = None):
 @app.get("/api/analyze/full")
 async def full_analysis(image_id: Optional[str] = None):
     """Run complete analysis pipeline"""
+    pests = mock_yolov8_detection()
+    nutrients = mock_nutrient_analysis()
+    yield_pred = mock_yield_prediction()
+    field_zones = generate_field_zones(nutrients, pests)
+
     return {
         "image_id": image_id or "demo",
         "timestamp": datetime.now().isoformat(),
-        "pest_analysis": mock_yolov8_detection(),
-        "nutrient_analysis": mock_nutrient_analysis(),
-        "yield_prediction": mock_yield_prediction()
+        "pest_analysis": pests,
+        "nutrient_analysis": nutrients,
+        "yield_prediction": yield_pred,
+        "field_zones": field_zones
     }
 
 @app.post("/analyze")
 async def analyze_image(file: UploadFile = File(...)):
     """Legacy endpoint - analyze drone image"""
+
+    # Apply validations
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 10MB.")
+
     pests = mock_yolov8_detection()
     nutrients = mock_nutrient_analysis()
     yield_pred = mock_yield_prediction()
     
+    # Generate field zones based on analysis
+    field_zones = generate_field_zones(nutrients, pests)
+
     return {
         "image_id": str(uuid.uuid4()),
         "pest_detection": pests,
         "nutrient_analysis": nutrients,
         "yield_prediction": yield_pred,
+        "field_zones": field_zones,
         "recommendations": [
-            "Apply targeted pesticide spray in high-alert zones",
-            "Increase nitrogen fertilizer application",
+            pests["recommendation"],
+            nutrients["recommendation"],
             "Monitor field for next 7 days"
         ]
     }
