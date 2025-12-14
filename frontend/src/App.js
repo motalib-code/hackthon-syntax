@@ -333,7 +333,7 @@ function App() {
       <footer className="py-8 px-4 border-t border-gray-800">
         <div className="max-w-6xl mx-auto text-center">
           <p className="text-gray-500">
-            Copyright © 2025 AgriScan AI | Built for Smart India Hackathon Prototype
+            Copyright © 2025 AgriScan AI | Built for Smart India Hackathon Prototype | Version 1.0.0
           </p>
         </div>
       </footer>
