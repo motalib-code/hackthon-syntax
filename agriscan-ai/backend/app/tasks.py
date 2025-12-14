@@ -1,13 +1,15 @@
 from app.celery_worker import celery_app
 from app.database import SessionLocal
 from app.models import Analysis
+from app.config import settings
 import time
 import random
 import json
 from datetime import datetime
 
-@celery_app.task
-def process_pest_detection(analysis_id: str):
+# Synchronous task execution functions
+def _process_pest_detection_sync(analysis_id: str):
+    """Synchronous version of pest detection task"""
     db = SessionLocal()
     try:
         # Simulate processing
@@ -47,8 +49,8 @@ def process_pest_detection(analysis_id: str):
     finally:
         db.close()
 
-@celery_app.task
-def process_nutrient_analysis(analysis_id: str):
+def _process_nutrient_analysis_sync(analysis_id: str):
+    """Synchronous version of nutrient analysis task"""
     db = SessionLocal()
     try:
         time.sleep(5)
@@ -67,8 +69,8 @@ def process_nutrient_analysis(analysis_id: str):
     finally:
         db.close()
 
-@celery_app.task
-def process_yield_prediction(analysis_id: str):
+def _process_yield_prediction_sync(analysis_id: str):
+    """Synchronous version of yield prediction task"""
     db = SessionLocal()
     try:
         time.sleep(5)
@@ -92,3 +94,27 @@ def process_yield_prediction(analysis_id: str):
             db.commit()
     finally:
         db.close()
+
+# Celery task decorators (only if Celery is enabled)
+if celery_app:
+    @celery_app.task
+    def process_pest_detection(analysis_id: str):
+        return _process_pest_detection_sync(analysis_id)
+
+    @celery_app.task
+    def process_nutrient_analysis(analysis_id: str):
+        return _process_nutrient_analysis_sync(analysis_id)
+
+    @celery_app.task
+    def process_yield_prediction(analysis_id: str):
+        return _process_yield_prediction_sync(analysis_id)
+else:
+    # Fallback to synchronous execution
+    def process_pest_detection(analysis_id: str):
+        return _process_pest_detection_sync(analysis_id)
+    
+    def process_nutrient_analysis(analysis_id: str):
+        return _process_nutrient_analysis_sync(analysis_id)
+    
+    def process_yield_prediction(analysis_id: str):
+        return _process_yield_prediction_sync(analysis_id)
